@@ -1,0 +1,86 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local localPlayer = Players.LocalPlayer
+
+local function setupAntiHit(character)
+    local humanoid = character:WaitForChild("Humanoid")
+    local rootPart = character:WaitForChild("HumanoidRootPart")
+    
+    -- Funkcja sprawdzająca czy siedzi na prawdziwym siedzeniu
+    local function isSittingOnValidSeat()
+        local seat = humanoid.SeatPart
+        if seat then
+            -- Sprawdź czy to prawdziwe siedzenie (nie spawnowane przez grę jako knockback)
+            if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
+                -- Dodatkowe sprawdzenie: czy siedzenie jest w workspace i ma sensowną pozycję
+                if seat.Parent and seat.Parent:IsA("Workspace") then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+    
+    -- Blokowanie wymuszonego siedzenia
+    humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+        if humanoid.Sit and not isSittingOnValidSeat() then
+            humanoid.Sit = false
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+    
+    humanoid.StateChanged:Connect(function(_, newState)
+        if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) and not isSittingOnValidSeat() then
+            humanoid:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end)
+
+    -- Niszczenie wszystkich typów sił / prędkości
+    local function checkAndDestroyKnockback(child)
+        if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") or child:IsA("BodyAngularVelocity") or child:IsA("AngularVelocity") then
+            task.spawn(function()
+                child:Destroy()
+            end)
+        end
+    end
+
+    rootPart.ChildAdded:Connect(checkAndDestroyKnockback)
+    character.ChildAdded:Connect(checkAndDestroyKnockback)
+    
+    for _, child in pairs(rootPart:GetChildren()) do checkAndDestroyKnockback(child) end
+    for _, child in pairs(character:GetChildren()) do checkAndDestroyKnockback(child) end
+
+    -- Zerowanie prędkości co klatkę (jeśli knockback jest aplikowany bezpośrednio)
+    local connection
+    connection = RunService.Heartbeat:Connect(function()
+        if not character or not character.Parent then
+            connection:Disconnect()
+            return
+        end
+        
+        local velocity = rootPart.AssemblyLinearVelocity
+        local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
+        local yVelocity = velocity.Y
+        
+        -- Blokuj tylko nadmierną prędkość poziomą (knockback)
+        if horizontalSpeed > 50 then
+            rootPart.AssemblyLinearVelocity = Vector3.new(0, yVelocity, 0)
+        end
+        
+        -- Opcjonalnie: ogranicz prędkość pionową tylko przy ekstremalnych wartościach
+        if math.abs(yVelocity) > 100 then
+            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, math.clamp(yVelocity, -100, 100), velocity.Z)
+        end
+    end)
+end
+
+-- Obsługa postaci
+if localPlayer.Character then
+    setupAntiHit(localPlayer.Character)
+end
+
+localPlayer.CharacterAdded:Connect(function(newCharacter)
+    setupAntiHit(newCharacter)
+end)
+
+warn("[ANTI-HIT v5] Załadowano poprawnie! Knockback zablokowany, skakanie działa normalnie, siadanie blokowane.")
