@@ -122,4 +122,4 @@ localPlayer.CharacterAdded:Connect(function(newCharacter)
     setupAntiHit(newCharacter)
 end)
 
-warn("[ANTI-HIT] Załadowano poprawnie a xenor to cwel.")
+warn("[ANTI-HIT] Załadowano poprawnie! (chyba) .")
