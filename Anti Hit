@@ -2,6 +2,15 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local localPlayer = Players.LocalPlayer
 
+-- Konfiguracja
+local CONFIG = {
+    DefaultSpeed = 16, -- Normalna prędkość chodzenia
+    DefaultJumpPower = 50, -- Normalna siła skoku (domyślna w Roblox)
+    KnockbackMultiplier = 5, -- Mnożnik dla speeda
+    JumpMultiplier = 5, -- Mnożnik dla jumpa (jak dużo większy knockback pionowy może być)
+    AntiSit = true -- Czy blokować wymuszone siadanie
+}
+
 local function setupAntiHit(character)
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
@@ -10,9 +19,7 @@ local function setupAntiHit(character)
     local function isSittingOnValidSeat()
         local seat = humanoid.SeatPart
         if seat then
-            -- Sprawdź czy to prawdziwe siedzenie (nie spawnowane przez grę jako knockback)
             if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
-                -- Dodatkowe sprawdzenie: czy siedzenie jest w workspace i ma sensowną pozycję
                 if seat.Parent and seat.Parent:IsA("Workspace") then
                     return true
                 end
@@ -22,18 +29,20 @@ local function setupAntiHit(character)
     end
     
     -- Blokowanie wymuszonego siedzenia
-    humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
-        if humanoid.Sit and not isSittingOnValidSeat() then
-            humanoid.Sit = false
-            humanoid:ChangeState(Enum.HumanoidStateType.Running)
-        end
-    end)
-    
-    humanoid.StateChanged:Connect(function(_, newState)
-        if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) and not isSittingOnValidSeat() then
-            humanoid:ChangeState(Enum.HumanoidStateType.Running)
-        end
-    end)
+    if CONFIG.AntiSit then
+        humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+            if humanoid.Sit and not isSittingOnValidSeat() then
+                humanoid.Sit = false
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+            end
+        end)
+        
+        humanoid.StateChanged:Connect(function(_, newState)
+            if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) and not isSittingOnValidSeat() then
+                humanoid:ChangeState(Enum.HumanoidStateType.Running)
+            end
+        end)
+    end
 
     -- Niszczenie wszystkich typów sił / prędkości
     local function checkAndDestroyKnockback(child)
@@ -50,7 +59,10 @@ local function setupAntiHit(character)
     for _, child in pairs(rootPart:GetChildren()) do checkAndDestroyKnockback(child) end
     for _, child in pairs(character:GetChildren()) do checkAndDestroyKnockback(child) end
 
-    -- Zerowanie prędkości co klatkę (jeśli knockback jest aplikowany bezpośrednio)
+    -- Dynamiczne wykrywanie knockbacku
+    local lastNormalSpeed = CONFIG.DefaultSpeed
+    local lastNormalJump = CONFIG.DefaultJumpPower
+    
     local connection
     connection = RunService.Heartbeat:Connect(function()
         if not character or not character.Parent then
@@ -58,18 +70,45 @@ local function setupAntiHit(character)
             return
         end
         
+        -- Sprawdź aktualny speed postaci
+        local currentSpeed = humanoid.WalkSpeed
+        if currentSpeed > lastNormalSpeed then
+            lastNormalSpeed = currentSpeed
+        end
+        
+        -- Sprawdź aktualną siłę skoku
+        local currentJump = humanoid.JumpPower
+        if currentJump > lastNormalJump then
+            lastNormalJump = currentJump
+        end
+        
         local velocity = rootPart.AssemblyLinearVelocity
         local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
         local yVelocity = velocity.Y
         
+        -- Dynamiczny próg dla prędkości poziomej
+        local horizontalKnockbackThreshold = lastNormalSpeed * CONFIG.KnockbackMultiplier
+        
+        -- Dynamiczny próg dla prędkości pionowej (skakanie)
+        -- JumpPower 50 = ~50 studs/s prędkości początkowej
+        -- Używamy mnożnika żeby nie blokować normalnych skoków
+        local verticalKnockbackThreshold = (lastNormalJump * 1.5) -- 75 dla normalnego jumpa
+        
         -- Blokuj tylko nadmierną prędkość poziomą (knockback)
-        if horizontalSpeed > 50 then
+        if horizontalSpeed > horizontalKnockbackThreshold then
             rootPart.AssemblyLinearVelocity = Vector3.new(0, yVelocity, 0)
         end
         
-        -- Opcjonalnie: ogranicz prędkość pionową tylko przy ekstremalnych wartościach
-        if math.abs(yVelocity) > 100 then
-            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, math.clamp(yVelocity, -100, 100), velocity.Z)
+        -- Blokuj tylko nadmierną prędkość pionową (knockback w górę)
+        -- Pozwala na normalne skakanie nawet z dużym jumpem
+        if yVelocity > verticalKnockbackThreshold * CONFIG.JumpMultiplier then
+            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, verticalKnockbackThreshold * CONFIG.JumpMultiplier, velocity.Z)
+        end
+        
+        -- Nie blokuj prędkości pionowej w dół (spadanie)
+        -- Tylko ekstremalne wartości (ochrona przed fall damage)
+        if yVelocity < -200 then
+            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, -200, velocity.Z)
         end
     end)
 end
@@ -83,4 +122,4 @@ localPlayer.CharacterAdded:Connect(function(newCharacter)
     setupAntiHit(newCharacter)
 end)
 
-warn("[ANTI-HIT v5] Załadowano poprawnie! Knockback zablokowany, skakanie działa normalnie, siadanie blokowane.")
+warn("[ANTI-HIT] Załadowano poprawnie a xenor to cwel.")
