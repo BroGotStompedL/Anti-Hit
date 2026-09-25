@@ -1,21 +1,36 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 local localPlayer = Players.LocalPlayer
 
 -- Konfiguracja
 local CONFIG = {
-    DefaultSpeed = 16, -- Normalna prędkość chodzenia
-    DefaultJumpPower = 50, -- Normalna siła skoku (domyślna w Roblox)
-    KnockbackMultiplier = 5, -- Mnożnik dla speeda
-    JumpMultiplier = 5, -- Mnożnik dla jumpa (jak dużo większy knockback pionowy może być)
-    AntiSit = true -- Czy blokować wymuszone siadanie
+    DefaultSpeed = 16,
+    DefaultJumpPower = 50,
+    KnockbackMultiplier = 5,
+    JumpMultiplier = 5,
+    AntiSit = true
 }
 
-local function setupAntiHit(character)
+-- Zmienne stanu
+local antiHitEnabled = false
+local connections = {}
+local currentCharacter = nil
+
+-- Funkcja anti-hit
+local function antiHitFunction(character)
+    if not antiHitEnabled then return end
+    
+    for _, conn in ipairs(connections) do
+        conn:Disconnect()
+    end
+    connections = {}
+    
+    currentCharacter = character
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
     
-    -- Funkcja sprawdzająca czy siedzi na prawdziwym siedzeniu
     local function isSittingOnValidSeat()
         local seat = humanoid.SeatPart
         if seat then
@@ -28,23 +43,23 @@ local function setupAntiHit(character)
         return false
     end
     
-    -- Blokowanie wymuszonego siedzenia
     if CONFIG.AntiSit then
-        humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
+        local sitConn = humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
             if humanoid.Sit and not isSittingOnValidSeat() then
                 humanoid.Sit = false
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end
         end)
+        table.insert(connections, sitConn)
         
-        humanoid.StateChanged:Connect(function(_, newState)
+        local stateConn = humanoid.StateChanged:Connect(function(_, newState)
             if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) and not isSittingOnValidSeat() then
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end
         end)
+        table.insert(connections, stateConn)
     end
 
-    -- Niszczenie wszystkich typów sił / prędkości
     local function checkAndDestroyKnockback(child)
         if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") or child:IsA("BodyAngularVelocity") or child:IsA("AngularVelocity") then
             task.spawn(function()
@@ -53,13 +68,15 @@ local function setupAntiHit(character)
         end
     end
 
-    rootPart.ChildAdded:Connect(checkAndDestroyKnockback)
-    character.ChildAdded:Connect(checkAndDestroyKnockback)
+    local childAddedConn1 = rootPart.ChildAdded:Connect(checkAndDestroyKnockback)
+    table.insert(connections, childAddedConn1)
+    
+    local childAddedConn2 = character.ChildAdded:Connect(checkAndDestroyKnockback)
+    table.insert(connections, childAddedConn2)
     
     for _, child in pairs(rootPart:GetChildren()) do checkAndDestroyKnockback(child) end
     for _, child in pairs(character:GetChildren()) do checkAndDestroyKnockback(child) end
 
-    -- Dynamiczne wykrywanie knockbacku
     local lastNormalSpeed = CONFIG.DefaultSpeed
     local lastNormalJump = CONFIG.DefaultJumpPower
     
@@ -70,13 +87,11 @@ local function setupAntiHit(character)
             return
         end
         
-        -- Sprawdź aktualny speed postaci
         local currentSpeed = humanoid.WalkSpeed
         if currentSpeed > lastNormalSpeed then
             lastNormalSpeed = currentSpeed
         end
         
-        -- Sprawdź aktualną siłę skoku
         local currentJump = humanoid.JumpPower
         if currentJump > lastNormalJump then
             lastNormalJump = currentJump
@@ -86,40 +101,150 @@ local function setupAntiHit(character)
         local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
         local yVelocity = velocity.Y
         
-        -- Dynamiczny próg dla prędkości poziomej
         local horizontalKnockbackThreshold = lastNormalSpeed * CONFIG.KnockbackMultiplier
+        local verticalKnockbackThreshold = (lastNormalJump * 1.5)
         
-        -- Dynamiczny próg dla prędkości pionowej (skakanie)
-        -- JumpPower 50 = ~50 studs/s prędkości początkowej
-        -- Używamy mnożnika żeby nie blokować normalnych skoków
-        local verticalKnockbackThreshold = (lastNormalJump * 1.5) -- 75 dla normalnego jumpa
-        
-        -- Blokuj tylko nadmierną prędkość poziomą (knockback)
         if horizontalSpeed > horizontalKnockbackThreshold then
             rootPart.AssemblyLinearVelocity = Vector3.new(0, yVelocity, 0)
         end
         
-        -- Blokuj tylko nadmierną prędkość pionową (knockback w górę)
-        -- Pozwala na normalne skakanie nawet z dużym jumpem
         if yVelocity > verticalKnockbackThreshold * CONFIG.JumpMultiplier then
             rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, verticalKnockbackThreshold * CONFIG.JumpMultiplier, velocity.Z)
         end
         
-        -- Nie blokuj prędkości pionowej w dół (spadanie)
-        -- Tylko ekstremalne wartości (ochrona przed fall damage)
         if yVelocity < -200 then
             rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, -200, velocity.Z)
         end
     end)
+    table.insert(connections, connection)
 end
+
+-- Funkcja do wyłączania anti-hita
+local function disableAntiHit()
+    antiHitEnabled = false
+    for _, conn in ipairs(connections) do
+        conn:Disconnect()
+    end
+    connections = {}
+end
+
+-- UI setup
+local UI = Instance.new("ScreenGui")
+local Main = Instance.new("ImageLabel")
+local Toggle = Instance.new("ImageLabel")
+local Button = Instance.new("TextButton")
+local Circle = Instance.new("ImageLabel")
+
+--Properties:
+UI.Name = "AntiHitUI"
+UI.Parent = localPlayer:WaitForChild("PlayerGui")
+
+Main.Name = "Main"
+Main.Parent = UI
+Main.BackgroundColor3 = Color3.fromRGB(48, 48, 48)
+Main.BackgroundTransparency = 1.000
+Main.Position = UDim2.new(0.5, -75, 0.5, -37)
+Main.Size = UDim2.new(0, 150, 0, 75)
+Main.Image = "rbxassetid://3570695787"
+Main.ImageColor3 = Color3.fromRGB(48, 48, 48)
+Main.ScaleType = Enum.ScaleType.Slice
+Main.SliceCenter = Rect.new(100, 100, 100, 100)
+Main.SliceScale = 0.120
+Main.Active = true
+Main.Draggable = true
+
+Toggle.Name = "Toggle"
+Toggle.Parent = Main
+Toggle.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+Toggle.BackgroundTransparency = 1.000
+Toggle.Position = UDim2.new(0.5, -23, 0.5, -11)
+Toggle.Size = UDim2.new(0, 46, 0, 22)
+Toggle.Image = "rbxassetid://3570695787"
+Toggle.ImageColor3 = Color3.fromRGB(200, 200, 200)
+Toggle.ScaleType = Enum.ScaleType.Slice
+Toggle.SliceCenter = Rect.new(100, 100, 100, 100)
+Toggle.SliceScale = 0.120
+
+Button.Name = "Button"
+Button.Parent = Toggle
+Button.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+Button.BackgroundTransparency = 1.000
+Button.Size = UDim2.new(1, 0, 1, 0)
+Button.Font = Enum.Font.SourceSans
+Button.Text = "Toggle"
+Button.TextColor3 = Color3.fromRGB(0, 0, 0)
+Button.TextSize = 14.000
+Button.TextTransparency = 1.000
+Button.Active = true
+Button.ZIndex = 2
+
+Circle.Name = "Circle"
+Circle.Parent = Toggle
+Circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+Circle.BackgroundTransparency = 1.000
+Circle.Position = UDim2.new(0, 2, 0, 2)
+Circle.Size = UDim2.new(0, 18, 0, 18)
+Circle.Image = "rbxassetid://3570695787"
+Circle.ScaleType = Enum.ScaleType.Slice
+Circle.SliceCenter = Rect.new(100, 100, 100, 100)
+Circle.SliceScale = 0.120
+
+-- Funkcja do aktualizacji UI
+local function updateUI()
+    if antiHitEnabled then
+        TweenService:Create(Toggle, TweenInfo.new(0.25), {ImageColor3 = Color3.fromRGB(64, 200, 114)}):Play()
+        TweenService:Create(Circle, TweenInfo.new(0.25), {Position = UDim2.new(1,-20,0,2)}):Play()
+    else
+        TweenService:Create(Toggle, TweenInfo.new(0.25), {ImageColor3 = Color3.fromRGB(200, 200, 200)}):Play()
+        TweenService:Create(Circle, TweenInfo.new(0.25), {Position = UDim2.new(0,2,0,2)}):Play()
+    end
+end
+
+-- Obsługa kliknięcia przycisku toggle
+Button.MouseButton1Click:Connect(function()
+    if antiHitEnabled then
+        disableAntiHit()
+        updateUI()
+        print("[ANTI-HIT] Wyłączono anti-hit")
+    else
+        antiHitEnabled = true
+        updateUI()
+        if currentCharacter then
+            antiHitFunction(currentCharacter)
+        end
+        print("[ANTI-HIT] Włączono anti-hit")
+    end
+end)
+
+-- Obsługa klawisza K do zamykania/otwierania
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    
+    if input.KeyCode == Enum.KeyCode.K then
+        if UI.Enabled then
+            UI.Enabled = false
+        else
+            UI.Enabled = true
+        end
+    end
+end)
+
+-- Ustaw początkowy stan UI
+updateUI()
 
 -- Obsługa postaci
 if localPlayer.Character then
-    setupAntiHit(localPlayer.Character)
+    currentCharacter = localPlayer.Character
+    if antiHitEnabled then
+        antiHitFunction(currentCharacter)
+    end
 end
 
 localPlayer.CharacterAdded:Connect(function(newCharacter)
-    setupAntiHit(newCharacter)
+    currentCharacter = newCharacter
+    if antiHitEnabled then
+        antiHitFunction(newCharacter)
+    end
 end)
 
-warn("[ANTI-HIT] Załadowano poprawnie! (chyba) .")
+warn("[ANTI-HIT] Załadowano poprawnie! (Chyba)")
