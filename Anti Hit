@@ -8,13 +8,16 @@ local localPlayer = Players.LocalPlayer
 local CONFIG = {
     DefaultSpeed = 16,
     DefaultJumpPower = 50,
-    AntiSit = true
+    AntiSit = true,
+    KnockbackThreshold = 20,
+    KnockbackTime = 0.2
 }
 
 -- Zmienne stanu
 local antiHitEnabled = false
 local connections = {}
 local currentCharacter = nil
+local isFlying = false
 
 -- Funkcja anti-hit
 local function antiHitFunction(character)
@@ -29,19 +32,14 @@ local function antiHitFunction(character)
     local humanoid = character:WaitForChild("Humanoid")
     local rootPart = character:WaitForChild("HumanoidRootPart")
     
-    local function isSittingOnValidSeat()
-        local seat = humanoid.SeatPart
-        if seat then
-            if seat:IsA("Seat") or seat:IsA("VehicleSeat") then
-                if seat.Parent and seat.Parent:IsA("Workspace") then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-    
+    -- Anti-sit
     if CONFIG.AntiSit then
+        local function isSittingOnValidSeat()
+            local seat = humanoid.SeatPart
+            return seat and (seat:IsA("Seat") or seat:IsA("VehicleSeat")) 
+                   and seat.Parent and seat.Parent:IsA("Workspace")
+        end
+        
         local sitConn = humanoid:GetPropertyChangedSignal("Sit"):Connect(function()
             if humanoid.Sit and not isSittingOnValidSeat() then
                 humanoid.Sit = false
@@ -51,42 +49,20 @@ local function antiHitFunction(character)
         table.insert(connections, sitConn)
         
         local stateConn = humanoid.StateChanged:Connect(function(_, newState)
-            if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) and not isSittingOnValidSeat() then
+            if (newState == Enum.HumanoidStateType.Seated or newState == Enum.HumanoidStateType.PlatformStanding) 
+               and not isSittingOnValidSeat() then
                 humanoid:ChangeState(Enum.HumanoidStateType.Running)
             end
         end)
         table.insert(connections, stateConn)
     end
 
-    -- NIE niszczymy sił od fly/speed - tylko od knockbacku
+    -- NISZCZENIE WSZYSTKICH SIŁ - DOKŁADNIE JAK W STARYM SKRYPCIE
     local function checkAndDestroyKnockback(child)
         if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") then
-            -- Sprawdź czy to siła od fly (ma dużą siłę pionową)
-            local isFlyForce = false
-            if child:IsA("BodyVelocity") then
-                if child.MaxForce.Y > 1000 or child.Velocity.Y > 50 then
-                    isFlyForce = true
-                end
-            elseif child:IsA("LinearVelocity") then
-                if child.MaxForce.Y > 1000 or child.VectorVelocity.Y > 50 then
-                    isFlyForce = true
-                end
-            elseif child:IsA("BodyForce") then
-                if child.Force.Y > 1000 then
-                    isFlyForce = true
-                end
-            elseif child:IsA("VectorForce") then
-                if child.Force.Y > 1000 then
-                    isFlyForce = true
-                end
-            end
-            
-            -- Niszcz tylko jeśli to nie jest siła od fly
-            if not isFlyForce then
-                task.spawn(function()
-                    child:Destroy()
-                end)
-            end
+            task.spawn(function()
+                child:Destroy()
+            end)
         end
     end
 
@@ -99,11 +75,10 @@ local function antiHitFunction(character)
     for _, child in pairs(rootPart:GetChildren()) do checkAndDestroyKnockback(child) end
     for _, child in pairs(character:GetChildren()) do checkAndDestroyKnockback(child) end
 
-    -- Zmienne do wykrywania knockbacku
+    -- Główna pętla anti-knockback
     local lastVelocity = Vector3.new()
     local knockbackActive = false
     local knockbackTimer = 0
-    local isFalling = false
     
     local connection
     connection = RunService.Heartbeat:Connect(function(deltaTime)
@@ -123,49 +98,34 @@ local function antiHitFunction(character)
                           humanoidState == Enum.HumanoidStateType.Landed or
                           humanoidState == Enum.HumanoidStateType.GettingUp
         
-        -- Wykrywanie spadania
-        if not isGrounded and yVelocity < -5 then
-            isFalling = true
-        else
-            isFalling = false
-        end
+        -- Oblicz zmianę prędkości
+        local velocityChange = (velocity - lastVelocity).Magnitude
         
-        -- Sprawdź czy mamy siłę od fly
-        local hasFlyForce = false
-        for _, child in pairs(rootPart:GetChildren()) do
-            if child:IsA("BodyVelocity") and child.MaxForce.Y > 1000 then
-                hasFlyForce = true
-                break
-            elseif child:IsA("LinearVelocity") and child.MaxForce.Y > 1000 then
-                hasFlyForce = true
-                break
+        -- Wykrywanie knockbacku
+        local isKnockback = false
+        
+        if not isFlying then
+            -- Nagła zmiana prędkości
+            if velocityChange > CONFIG.KnockbackThreshold then
+                isKnockback = true
+                knockbackTimer = CONFIG.KnockbackTime
+            end
+            
+            -- Wysoka prędkość pozioma w powietrzu
+            if not isGrounded and horizontalSpeed > CONFIG.KnockbackThreshold * 2 then
+                isKnockback = true
+                knockbackTimer = CONFIG.KnockbackTime
+            end
+            
+            -- Wysoka prędkość pionowa
+            if math.abs(yVelocity) > 40 then
+                isKnockback = true
+                knockbackTimer = CONFIG.KnockbackTime
             end
         end
         
-        -- Wykrywanie prawdziwego knockbacku (NIE spadania, NIE skakania, NIE fly)
-        local isKnockback = false
-        
-        -- 1. Nagła zmiana prędkości poziomej (tylko gdy nie spadamy i nie latamy)
-        local velocityChange = (velocity - lastVelocity).Magnitude
-        if velocityChange > 40 and not isFalling and not hasFlyForce then
-            isKnockback = true
-            knockbackTimer = 0.1
-        end
-        
-        -- 2. Wysoka prędkość pozioma w powietrzu (nie podczas normalnego spadania)
-        if not isGrounded and not isFalling and not hasFlyForce and horizontalSpeed > 50 then
-            isKnockback = true
-            knockbackTimer = 0.1
-        end
-        
-        -- 3. Nagła zmiana prędkości pionowej (nie podczas skoku i nie podczas fly)
-        if not isFalling and not hasFlyForce and math.abs(yVelocity) > 80 and humanoidState ~= Enum.HumanoidStateType.Jumping then
-            isKnockback = true
-            knockbackTimer = 0.1
-        end
-        
-        -- Zablokuj knockback TYLKO gdy jest aktywny
-        if knockbackActive or isKnockback then
+        -- BLOKOWANIE KNOCKBACKU - NATYCHMIASTOWE
+        if isKnockback or knockbackActive then
             knockbackActive = true
             
             -- Zachowaj normalny ruch gracza
@@ -176,52 +136,22 @@ local function antiHitFunction(character)
                 normalVelocity = moveDirection * humanoid.WalkSpeed
             end
             
-            -- Blokuj knockback, ale NIE blokuj spadania, skoków ani fly
-            if isFalling or hasFlyForce then
-                -- Pozwól na normalne spadanie lub fly
+            -- Ustaw prędkość na normalną (blokuj knockback)
+            if isFlying then
+                -- Pozwól na fly
                 -- Nie rób nic
-            elseif humanoidState == Enum.HumanoidStateType.Jumping or 
-               humanoidState == Enum.HumanoidStateType.Freefall then
-                -- Zachowaj prędkość pionową jeśli gracz skacze
-                rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, yVelocity, normalVelocity.Z)
-            else
+            elseif isGrounded then
+                -- Na ziemi: tylko normalny ruch
                 rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, 0, normalVelocity.Z)
+            else
+                -- W powietrzu: zachowaj grawitację, ale blokuj poziomy knockback
+                rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, yVelocity, normalVelocity.Z)
             end
             
             -- Odliczaj timer
             knockbackTimer = knockbackTimer - deltaTime
             if knockbackTimer <= 0 then
                 knockbackActive = false
-            end
-        end
-        
-        -- Usuwanie sił co klatkę (ale NIE niszcz tych od fly/speed)
-        for _, child in pairs(rootPart:GetChildren()) do
-            if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") then
-                -- Sprawdź czy to nie jest siła od fly
-                local isFlyChild = false
-                if child:IsA("BodyVelocity") then
-                    if child.MaxForce.Y > 1000 or child.Velocity.Y > 50 then
-                        isFlyChild = true
-                    end
-                elseif child:IsA("LinearVelocity") then
-                    if child.MaxForce.Y > 1000 or child.VectorVelocity.Y > 50 then
-                        isFlyChild = true
-                    end
-                elseif child:IsA("BodyForce") then
-                    if child.Force.Y > 1000 then
-                        isFlyChild = true
-                    end
-                elseif child:IsA("VectorForce") then
-                    if child.Force.Y > 1000 then
-                        isFlyChild = true
-                    end
-                end
-                
-                -- Niszcz tylko jeśli to nie jest siła od fly
-                if not isFlyChild then
-                    child:Destroy()
-                end
             end
         end
         
@@ -240,7 +170,7 @@ local function disableAntiHit()
     connections = {}
 end
 
--- UI setup (bez zmian)
+-- UI setup
 local UI = Instance.new("ScreenGui")
 local Main = Instance.new("ImageLabel")
 local Toggle = Instance.new("ImageLabel")
@@ -250,6 +180,7 @@ local Circle = Instance.new("ImageLabel")
 --Properties:
 UI.Name = "AntiHitUI"
 UI.Parent = localPlayer:WaitForChild("PlayerGui")
+UI.ResetOnSpawn = false
 
 Main.Name = "Main"
 Main.Parent = UI
@@ -333,11 +264,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
     if input.KeyCode == Enum.KeyCode.K then
-        if UI.Enabled then
-            UI.Enabled = false
-        else
-            UI.Enabled = true
-        end
+        UI.Enabled = not UI.Enabled
     end
 end)
 
@@ -359,4 +286,4 @@ localPlayer.CharacterAdded:Connect(function(newCharacter)
     end
 end)
 
-warn("[ANTI-HIT] Załadowano poprawnie (chyba)! Naciśnij K aby zamknąć/otworzyć GUI")
+warn("[ANTI-HIT] Załadowano poprawnie! (chyba). Kliknij "K" żeby Otworzyc/Zamknac GUI")
