@@ -80,8 +80,13 @@ local function antiHitFunction(character)
     local lastNormalSpeed = CONFIG.DefaultSpeed
     local lastNormalJump = CONFIG.DefaultJumpPower
     
+    -- Zmienne do wykrywania knockbacku
+    local lastVelocity = Vector3.new()
+    local knockbackActive = false
+    local knockbackTimer = 0
+    
     local connection
-    connection = RunService.Heartbeat:Connect(function()
+    connection = RunService.Heartbeat:Connect(function(deltaTime)
         if not character or not character.Parent then
             connection:Disconnect()
             return
@@ -98,23 +103,86 @@ local function antiHitFunction(character)
         end
         
         local velocity = rootPart.AssemblyLinearVelocity
+        local speed = velocity.Magnitude
         local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
         local yVelocity = velocity.Y
         
-        local horizontalKnockbackThreshold = lastNormalSpeed * CONFIG.KnockbackMultiplier
-        local verticalKnockbackThreshold = (lastNormalJump * 1.5)
+        -- Sprawdź czy gracz jest na ziemi
+        local humanoidState = humanoid:GetState()
+        local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
+                          humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
+                          humanoidState == Enum.HumanoidStateType.Landed or
+                          humanoidState == Enum.HumanoidStateType.GettingUp
         
-        if horizontalSpeed > horizontalKnockbackThreshold then
-            rootPart.AssemblyLinearVelocity = Vector3.new(0, yVelocity, 0)
+        -- Wykrywanie knockbacku - BARDZIEJ AGRESYWNE
+        local isKnockback = false
+        
+        -- 1. Nagła zmiana prędkości (Delta > 30)
+        local velocityChange = (velocity - lastVelocity).Magnitude
+        if velocityChange > 30 then
+            isKnockback = true
+            knockbackTimer = 0.2 -- Blokuj przez 0.2 sekundy
         end
         
-        if yVelocity > verticalKnockbackThreshold * CONFIG.JumpMultiplier then
-            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, verticalKnockbackThreshold * CONFIG.JumpMultiplier, velocity.Z)
+        -- 2. Wysoka prędkość pozioma w powietrzu
+        if not isGrounded and horizontalSpeed > lastNormalSpeed * 1.5 then
+            isKnockback = true
+            knockbackTimer = 0.2
         end
         
-        if yVelocity < -200 then
-            rootPart.AssemblyLinearVelocity = Vector3.new(velocity.X, -200, velocity.Z)
+        -- 3. Wysoka prędkość pionowa
+        if yVelocity > lastNormalJump * 2 or yVelocity < -lastNormalJump * 2 then
+            isKnockback = true
+            knockbackTimer = 0.2
         end
+        
+        -- 4. Ekstremalna prędkość
+        if speed > lastNormalSpeed * 4 then
+            isKnockback = true
+            knockbackTimer = 0.2
+        end
+        
+        -- Jeśli knockback jest aktywny, blokuj
+        if knockbackActive or isKnockback then
+            knockbackActive = true
+            
+            -- Zachowaj normalny ruch gracza
+            local moveDirection = humanoid.MoveDirection
+            local normalVelocity = Vector3.new(0, 0, 0)
+            
+            if moveDirection.Magnitude > 0 then
+                normalVelocity = moveDirection * lastNormalSpeed
+            end
+            
+            -- Blokuj knockback, ale pozwól na skoki
+            if humanoidState == Enum.HumanoidStateType.Jumping or 
+               humanoidState == Enum.HumanoidStateType.Freefall then
+                -- Zachowaj prędkość pionową tylko jeśli gracz skacze
+                if yVelocity > 0 then
+                    rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, yVelocity, normalVelocity.Z)
+                else
+                    rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, 0, normalVelocity.Z)
+                end
+            else
+                rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, 0, normalVelocity.Z)
+            end
+            
+            -- Odliczaj timer
+            knockbackTimer = knockbackTimer - deltaTime
+            if knockbackTimer <= 0 then
+                knockbackActive = false
+            end
+        end
+        
+        -- Usuwanie sił co klatkę
+        for _, child in pairs(rootPart:GetChildren()) do
+            if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") then
+                child:Destroy()
+            end
+        end
+        
+        -- Zapisuj aktualną prędkość
+        lastVelocity = rootPart.AssemblyLinearVelocity
     end)
     table.insert(connections, connection)
 end
@@ -247,4 +315,4 @@ localPlayer.CharacterAdded:Connect(function(newCharacter)
     end
 end)
 
-warn("[ANTI-HIT] Załadowano poprawnie! (Chyba)")
+warn("[ANTI-HIT] Załadowano poprawnie! (chyba) ")
