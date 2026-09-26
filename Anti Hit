@@ -286,4 +286,4 @@ localPlayer.CharacterAdded:Connect(function(newCharacter)
     end
 end)
 
-warn("[ANTI-HIT] Załadowano poprawnie! (chyba). Kliknij "K" żeby Otworzyc/Zamknac GUI")
+warn("[ANTI-HIT] Załadowano poprawnie (chyba)! Naciśnij K aby zamknąć/otworzyć GUI")
