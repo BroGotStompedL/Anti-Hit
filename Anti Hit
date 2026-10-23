@@ -5,7 +5,6 @@ return (function()
     local UserInputService = game:GetService("UserInputService")
     local localPlayer = Players.LocalPlayer
 
-    -- Konfiguracja
     local CONFIG = {
         DefaultSpeed = 16,
         DefaultJumpPower = 50,
@@ -14,13 +13,11 @@ return (function()
         KnockbackTime = 0.2
     }
 
-    -- Zmienne stanu
     local antiHitEnabled = false
     local connections = {}
     local currentCharacter = nil
     local isFlying = false
 
-    -- Funkcja anti-hit
     local function antiHitFunction(character)
         if not antiHitEnabled then return end
         
@@ -33,7 +30,6 @@ return (function()
         local humanoid = character:WaitForChild("Humanoid")
         local rootPart = character:WaitForChild("HumanoidRootPart")
         
-        -- Anti-sit
         if CONFIG.AntiSit then
             local function isSittingOnValidSeat()
                 local seat = humanoid.SeatPart
@@ -58,7 +54,6 @@ return (function()
             table.insert(connections, stateConn)
         end
 
-        -- NISZCZENIE WSZYSTKICH SIŁ - DOKŁADNIE JAK W STARYM SKRYPCIE
         local function checkAndDestroyKnockback(child)
             if child:IsA("BodyVelocity") or child:IsA("LinearVelocity") or child:IsA("BodyForce") or child:IsA("VectorForce") then
                 task.spawn(function()
@@ -92,44 +87,36 @@ return (function()
             local horizontalSpeed = Vector3.new(velocity.X, 0, velocity.Z).Magnitude
             local yVelocity = velocity.Y
             
-            -- Sprawdź czy gracz jest na ziemi
             local humanoidState = humanoid:GetState()
             local isGrounded = humanoidState == Enum.HumanoidStateType.Running or 
                               humanoidState == Enum.HumanoidStateType.RunningNoPhysics or
                               humanoidState == Enum.HumanoidStateType.Landed or
                               humanoidState == Enum.HumanoidStateType.GettingUp
             
-            -- Oblicz zmianę prędkości
             local velocityChange = (velocity - lastVelocity).Magnitude
             
-            -- Wykrywanie knockbacku
             local isKnockback = false
             
             if not isFlying then
-                -- Nagła zmiana prędkości
                 if velocityChange > CONFIG.KnockbackThreshold then
                     isKnockback = true
                     knockbackTimer = CONFIG.KnockbackTime
                 end
                 
-                -- Wysoka prędkość pozioma w powietrzu
                 if not isGrounded and horizontalSpeed > CONFIG.KnockbackThreshold * 2 then
                     isKnockback = true
                     knockbackTimer = CONFIG.KnockbackTime
                 end
                 
-                -- Wysoka prędkość pionowa
                 if math.abs(yVelocity) > 40 then
                     isKnockback = true
                     knockbackTimer = CONFIG.KnockbackTime
                 end
             end
             
-            -- BLOKOWANIE KNOCKBACKU - NATYCHMIASTOWE
             if isKnockback or knockbackActive then
                 knockbackActive = true
                 
-                -- Zachowaj normalny ruch gracza
                 local moveDirection = humanoid.MoveDirection
                 local normalVelocity = Vector3.new(0, 0, 0)
                 
@@ -137,32 +124,24 @@ return (function()
                     normalVelocity = moveDirection * humanoid.WalkSpeed
                 end
                 
-                -- Ustaw prędkość na normalną (blokuj knockback)
                 if isFlying then
-                    -- Pozwól na fly
-                    -- Nie rób nic
                 elseif isGrounded then
-                    -- Na ziemi: tylko normalny ruch
                     rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, 0, normalVelocity.Z)
                 else
-                    -- W powietrzu: zachowaj grawitację, ale blokuj poziomy knockback
                     rootPart.AssemblyLinearVelocity = Vector3.new(normalVelocity.X, yVelocity, normalVelocity.Z)
                 end
                 
-                -- Odliczaj timer
                 knockbackTimer = knockbackTimer - deltaTime
                 if knockbackTimer <= 0 then
                     knockbackActive = false
                 end
             end
             
-            -- Zapisuj aktualną prędkość
             lastVelocity = rootPart.AssemblyLinearVelocity
         end)
         table.insert(connections, connection)
     end
 
-    -- Funkcja do wyłączania anti-hita
     local function disableAntiHit()
         antiHitEnabled = false
         for _, conn in ipairs(connections) do
@@ -171,14 +150,12 @@ return (function()
         connections = {}
     end
 
-    -- UI setup
     local UI = Instance.new("ScreenGui")
     local Main = Instance.new("ImageLabel")
     local Toggle = Instance.new("ImageLabel")
     local Button = Instance.new("TextButton")
     local Circle = Instance.new("ImageLabel")
 
-    --Properties:
     UI.Name = "AntiHitUI"
     UI.Parent = localPlayer:WaitForChild("PlayerGui")
     UI.ResetOnSpawn = false
@@ -233,7 +210,6 @@ return (function()
     Circle.SliceCenter = Rect.new(100, 100, 100, 100)
     Circle.SliceScale = 0.120
 
-    -- Funkcja do aktualizacji UI
     local function updateUI()
         if antiHitEnabled then
             TweenService:Create(Toggle, TweenInfo.new(0.25), {ImageColor3 = Color3.fromRGB(64, 200, 114)}):Play()
@@ -244,7 +220,6 @@ return (function()
         end
     end
 
-    -- Obsługa kliknięcia przycisku toggle
     Button.MouseButton1Click:Connect(function()
         if antiHitEnabled then
             disableAntiHit()
@@ -260,7 +235,6 @@ return (function()
         end
     end)
 
-    -- Obsługa klawisza K do zamykania/otwierania
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         
@@ -269,10 +243,8 @@ return (function()
         end
     end)
 
-    -- Ustaw początkowy stan UI
     updateUI()
 
-    -- Obsługa postaci
     if localPlayer.Character then
         currentCharacter = localPlayer.Character
         if antiHitEnabled then
